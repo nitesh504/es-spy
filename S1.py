@@ -1,240 +1,47 @@
+import streamlit as st
 import yfinance as yf
-import tkinter as tk
-from tkinter import ttk, messagebox
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
+import numpy as np
+import altair as alt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-class ESSpyTracker:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("UTY CAPITAL ES-SPY Price Tracker")
-        self.root.geometry("800x600")  # Increased height to accommodate the calculator
-        self.root.configure(bg="#f0f0f0")
-        
-        # Variables
-        self.es_data = pd.DataFrame()
-        self.spy_data = pd.DataFrame()
-        self.ratio_data = []
-        self.timestamps = []
-        self.running = False
-        self.update_interval = 5 # Fixed at 5 seconds
-        self.dark_mode = False
-        self.current_ratio = 10.0  # Default ratio
-        
-        # Create the GUI
-        self.create_widgets()
-        
-        # Start tracking immediately
-        self.running = True
-        self.update_data_loop_thread = threading.Thread(target=self.update_data_loop)
-        self.update_data_loop_thread.daemon = True
-        self.update_data_loop_thread.start()
-        
-    def create_widgets(self):
-        # Main frame
-        main_frame = tk.Frame(self.root, bg="#f0f0f0")
-        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
-        
-        # Header with title
-        header = tk.Label(main_frame, text="UTY CAPITAL ES-SPY Real-Time Tracker", 
-                          font=("Arial", 18, "bold"), bg="#f0f0f0")
-        header.pack(pady=(0, 10))
-        
-        # Price display frame
-        price_frame = tk.Frame(main_frame, bg="#f0f0f0", relief="ridge", bd=1)
-        price_frame.pack(fill="x", pady=5)
-        
-        # Price display (2x2 grid)
-        price_style = {"font": ("Arial", 24, "bold"), "bg": "#f0f0f0"}
-        label_style = {"font": ("Arial", 12), "bg": "#f0f0f0"}
-        
-        # ES price
-        tk.Label(price_frame, text="ES Futures", **label_style).grid(row=0, column=0, padx=20, pady=(10, 0))
-        self.es_price_label = tk.Label(price_frame, text="--", **price_style)
-        self.es_price_label.grid(row=1, column=0, padx=20, pady=(0, 5))
-        self.es_change_label = tk.Label(price_frame, text="--", font=("Arial", 10), bg="#f0f0f0")
-        self.es_change_label.grid(row=2, column=0, padx=20, pady=(0, 10))
-        
-        # SPY price
-        tk.Label(price_frame, text="SPY ETF", **label_style).grid(row=0, column=1, padx=20, pady=(10, 0))
-        self.spy_price_label = tk.Label(price_frame, text="--", **price_style)
-        self.spy_price_label.grid(row=1, column=1, padx=20, pady=(0, 5))
-        self.spy_change_label = tk.Label(price_frame, text="--", font=("Arial", 10), bg="#f0f0f0")
-        self.spy_change_label.grid(row=2, column=1, padx=20, pady=(0, 10))
-        
-        # Ratio
-        tk.Label(price_frame, text="ES/SPY Ratio", **label_style).grid(row=0, column=2, padx=20, pady=(10, 0))
-        self.ratio_label = tk.Label(price_frame, text="--", **price_style)
-        self.ratio_label.grid(row=1, column=2, padx=20, pady=(0, 5))
-        self.ratio_change_label = tk.Label(price_frame, text="--", font=("Arial", 10), bg="#f0f0f0")
-        self.ratio_change_label.grid(row=2, column=2, padx=20, pady=(0, 10))
-        
-        # Last update time and control buttons
-        control_frame = tk.Frame(main_frame, bg="#f0f0f0")
-        control_frame.pack(fill="x", pady=5)
-        
-        # Theme toggle button
-        self.theme_button = tk.Button(control_frame, text="Dark Mode", 
-                                     command=self.toggle_theme, bg="#333", fg="white")
-        self.theme_button.pack(side="left", padx=5)
-        
-        # Clear data button
-        clear_button = tk.Button(control_frame, text="Clear Data", 
-                               command=self.clear_data)
-        clear_button.pack(side="left", padx=5)
-        
-        # Last update time
-        self.time_label = tk.Label(control_frame, text="Last update: --", 
-                                  font=("Arial", 10), bg="#f0f0f0")
-        self.time_label.pack(side="right")
-        
-        # Create the chart
-        self.chart_frame = tk.Frame(main_frame, bg="#f0f0f0")
-        self.chart_frame.pack(fill="both", expand=True, pady=10)
-        
-        self.create_chart()
-        
-        # NEW: Price Calculator Frame
-        self.create_price_calculator(main_frame)
-        
-        # Status bar
-        self.status_bar = tk.Label(self.root, text="Updating every 5 seconds...", 
-                                  bd=1, relief=tk.SUNKEN, anchor=tk.W, 
-                                  bg="#f0f0f0", font=("Arial", 9))
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-    
-    def create_price_calculator(self, parent):
-        # Price Calculator Frame
-        calculator_frame = tk.LabelFrame(parent, text="Price Calculator", 
-                                        font=("Arial", 12, "bold"), bg="#f0f0f0", padx=10, pady=10)
-        calculator_frame.pack(fill="x", pady=10)
-        
-        # ES Price Entry
-        es_calc_frame = tk.Frame(calculator_frame, bg="#f0f0f0")
-        es_calc_frame.pack(side=tk.LEFT, padx=20, fill="x", expand=True)
-        
-        tk.Label(es_calc_frame, text="ES Price:", font=("Arial", 10), bg="#f0f0f0").pack(side=tk.LEFT)
-        self.es_entry = tk.Entry(es_calc_frame, width=10, font=("Arial", 10))
-        self.es_entry.pack(side=tk.LEFT, padx=5)
-        self.es_calc_button = tk.Button(es_calc_frame, text="Calculate SPY", 
-                                       command=lambda: self.calculate_price("es"))
-        self.es_calc_button.pack(side=tk.LEFT, padx=5)
-        
-        # SPY Price Entry
-        spy_calc_frame = tk.Frame(calculator_frame, bg="#f0f0f0")
-        spy_calc_frame.pack(side=tk.RIGHT, padx=20, fill="x", expand=True)
-        
-        tk.Label(spy_calc_frame, text="SPY Price:", font=("Arial", 10), bg="#f0f0f0").pack(side=tk.LEFT)
-        self.spy_entry = tk.Entry(spy_calc_frame, width=10, font=("Arial", 10))
-        self.spy_entry.pack(side=tk.LEFT, padx=5)
-        self.spy_calc_button = tk.Button(spy_calc_frame, text="Calculate ES", 
-                                        command=lambda: self.calculate_price("spy"))
-        self.spy_calc_button.pack(side=tk.LEFT, padx=5)
-        
-        # Results frame
-        result_frame = tk.Frame(calculator_frame, bg="#f0f0f0")
-        result_frame.pack(fill="x", pady=10)
-        
-        # Result display
-        tk.Label(result_frame, text="Calculated Result:", font=("Arial", 10, "bold"), bg="#f0f0f0").pack(side=tk.LEFT)
-        self.calc_result_label = tk.Label(result_frame, text="--", font=("Arial", 10), bg="#f0f0f0")
-        self.calc_result_label.pack(side=tk.LEFT, padx=10)
-        
-        # Using current ratio checkbox
-        self.use_current_ratio_var = tk.BooleanVar(value=True)
-        self.use_ratio_check = tk.Checkbutton(calculator_frame, text="Use current market ratio", 
-                                             variable=self.use_current_ratio_var,
-                                             bg="#f0f0f0", font=("Arial", 9))
-        self.use_ratio_check.pack(anchor="w")
-        
-        # Custom ratio entry
-        custom_ratio_frame = tk.Frame(calculator_frame, bg="#f0f0f0")
-        custom_ratio_frame.pack(fill="x", pady=5)
-        
-        tk.Label(custom_ratio_frame, text="Custom Ratio:", font=("Arial", 9), bg="#f0f0f0").pack(side=tk.LEFT)
-        self.custom_ratio_entry = tk.Entry(custom_ratio_frame, width=8, font=("Arial", 9))
-        self.custom_ratio_entry.pack(side=tk.LEFT, padx=5)
-        self.custom_ratio_entry.insert(0, "10.0")  # Default ratio
-    
-    def calculate_price(self, source):
-        try:
-            ratio = self.current_ratio
-            
-            # Use custom ratio if checkbox is not checked
-            if not self.use_current_ratio_var.get():
-                try:
-                    ratio = float(self.custom_ratio_entry.get())
-                    if ratio <= 0:
-                        raise ValueError("Ratio must be positive")
-                except ValueError:
-                    messagebox.showerror("Error", "Please enter a valid positive number for custom ratio")
-                    return
-            
-            # Calculate based on source
-            if source == "es":
-                try:
-                    es_price = float(self.es_entry.get())
-                    spy_price = es_price / ratio
-                    self.calc_result_label.config(text=f"SPY Price: ${spy_price:.2f}")
-                    self.spy_entry.delete(0, tk.END)
-                    self.spy_entry.insert(0, f"{spy_price:.2f}")
-                except ValueError:
-                    messagebox.showerror("Error", "Please enter a valid ES price")
-            
-            elif source == "spy":
-                try:
-                    spy_price = float(self.spy_entry.get())
-                    es_price = spy_price * ratio
-                    self.calc_result_label.config(text=f"ES Price: ${es_price:.2f}")
-                    self.es_entry.delete(0, tk.END)
-                    self.es_entry.insert(0, f"{es_price:.2f}")
-                except ValueError:
-                    messagebox.showerror("Error", "Please enter a valid SPY price")
-                    
-        except Exception as e:
-            self.calc_result_label.config(text=f"Error: {str(e)}")
-    
-    def create_chart(self):
-        # Create matplotlib figure
-        self.fig, self.ax = plt.subplots(figsize=(8, 3))
-        self.fig.set_facecolor('#f0f0f0')
-        self.ax.set_facecolor('#f5f5f5')
-        self.ax.grid(True, linestyle='--', alpha=0.7)
-        self.fig.tight_layout(pad=3.0)
-        
-        # Create a twin axis for the ratio
-        self.ax_ratio = self.ax.twinx()
-        
-        # Create the canvas
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.chart_frame)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=1)
-        
-        # Initial plot
-        self.update_chart()
-    
-    def update_data_loop(self):
-        while self.running:
-            try:
-                self.status_bar.config(text="Fetching data...")
-                self.fetch_data()
-                self.update_display()
-                self.update_chart()
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.time_label.config(text=f"Last update: {now}")
-                self.status_bar.config(text="Updating every 5 seconds...")
-                
-                # Wait for the next update
-                time.sleep(self.update_interval)
-                    
-            except Exception as e:
-                self.status_bar.config(text=f"Error: {str(e)}")
-                time.sleep(5)
-    
-    def fetch_data(self):
+# Set page configuration
+st.set_page_config(
+    page_title="UTY CAPITAL ES-SPY Price Tracker",
+    page_icon="📈",
+    layout="wide",
+)
+
+# Initialize session state variables if they don't exist
+if 'es_data' not in st.session_state:
+    st.session_state.es_data = pd.DataFrame()
+if 'spy_data' not in st.session_state:
+    st.session_state.spy_data = pd.DataFrame()
+if 'ratio_data' not in st.session_state:
+    st.session_state.ratio_data = []
+if 'timestamps' not in st.session_state:
+    st.session_state.timestamps = []
+if 'current_ratio' not in st.session_state:
+    st.session_state.current_ratio = 10.0
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = "Not updated yet"
+if 'dark_mode' not in st.session_state:
+    st.session_state.dark_mode = False
+if 'es_change_pct' not in st.session_state:
+    st.session_state.es_change_pct = 0.0
+if 'spy_change_pct' not in st.session_state:
+    st.session_state.spy_change_pct = 0.0
+if 'ratio_change_pct' not in st.session_state:
+    st.session_state.ratio_change_pct = 0.0
+
+# Function to fetch data
+def fetch_data():
+    try:
         # Fetch ES data
         es_ticker = yf.Ticker("ES=F")
         es_data = es_ticker.history(period="1d", interval="1m")
@@ -251,198 +58,319 @@ class ESSpyTracker:
             timestamp = datetime.now().strftime("%H:%M:%S")
             
             # Update current ratio (for calculator)
-            self.current_ratio = ratio
+            st.session_state.current_ratio = ratio
             
             # Store data
-            self.es_data = pd.concat([self.es_data, es_data])
-            self.spy_data = pd.concat([self.spy_data, spy_data])
-            self.timestamps.append(timestamp)
-            self.ratio_data.append(ratio)
-            
-            # Limit data to last 100 points
-            if len(self.timestamps) > 100:
-                self.timestamps = self.timestamps[-100:]
-                self.ratio_data = self.ratio_data[-100:]
-            
-            return es_price, spy_price, ratio, timestamp
-        else:
-            raise Exception("Failed to fetch data")
-    
-    def update_display(self):
-        if not self.es_data.empty and not self.spy_data.empty:
-            # Get latest data
-            es_price = self.es_data["Close"].iloc[-1]
-            spy_price = self.spy_data["Close"].iloc[-1]
-            ratio = es_price / spy_price
-            
-            # Update price display
-            self.es_price_label.config(text=f"{es_price:.2f}")
-            self.spy_price_label.config(text=f"{spy_price:.2f}")
-            self.ratio_label.config(text=f"{ratio:.4f}")
-            
-            # Update current ratio in custom ratio entry if using current ratio
-            if self.use_current_ratio_var.get():
-                self.custom_ratio_entry.delete(0, tk.END)
-                self.custom_ratio_entry.insert(0, f"{ratio:.4f}")
+            st.session_state.es_data = pd.concat([st.session_state.es_data, es_data])
+            st.session_state.spy_data = pd.concat([st.session_state.spy_data, spy_data])
+            st.session_state.timestamps.append(timestamp)
+            st.session_state.ratio_data.append(ratio)
             
             # Calculate changes
-            if len(self.es_data) > 1:
-                es_change = es_price - self.es_data["Close"].iloc[-2]
-                es_change_pct = (es_change / self.es_data["Close"].iloc[-2]) * 100
-                es_change_color = "green" if es_change >= 0 else "red"
-                self.es_change_label.config(
-                    text=f"({es_change_pct:+.2f}%)",
-                    fg=es_change_color
-                )
+            if len(st.session_state.es_data) > 1:
+                es_change = es_price - st.session_state.es_data["Close"].iloc[-2]
+                st.session_state.es_change_pct = (es_change / st.session_state.es_data["Close"].iloc[-2]) * 100
             
-            if len(self.spy_data) > 1:
-                spy_change = spy_price - self.spy_data["Close"].iloc[-2]
-                spy_change_pct = (spy_change / self.spy_data["Close"].iloc[-2]) * 100
-                spy_change_color = "green" if spy_change >= 0 else "red"
-                self.spy_change_label.config(
-                    text=f"({spy_change_pct:+.2f}%)",
-                    fg=spy_change_color
-                )
+            if len(st.session_state.spy_data) > 1:
+                spy_change = spy_price - st.session_state.spy_data["Close"].iloc[-2]
+                st.session_state.spy_change_pct = (spy_change / st.session_state.spy_data["Close"].iloc[-2]) * 100
             
-            if len(self.ratio_data) > 1:
-                ratio_change = ratio - self.ratio_data[-2]
-                ratio_change_pct = (ratio_change / self.ratio_data[-2]) * 100
-                ratio_change_color = "green" if ratio_change >= 0 else "red"
-                self.ratio_change_label.config(
-                    text=f"({ratio_change_pct:+.2f}%)",
-                    fg=ratio_change_color
-                )
-    
-    def update_chart(self):
-        if hasattr(self, 'ax'):
-            self.ax.clear()
-            self.ax_ratio.clear()
+            if len(st.session_state.ratio_data) > 1:
+                ratio_change = ratio - st.session_state.ratio_data[-2]
+                st.session_state.ratio_change_pct = (ratio_change / st.session_state.ratio_data[-2]) * 100
             
-            # Plot price data if available
-            if len(self.timestamps) > 0:
-                # Plot ES and SPY on the left y-axis
-                if len(self.es_data) > 0:
-                    es_data = self.es_data["Close"].iloc[-len(self.timestamps):]
-                    self.ax.plot(self.timestamps, es_data, 'b-', label='ES', linewidth=1.5)
-                
-                if len(self.spy_data) > 0:
-                    spy_data = self.spy_data["Close"].iloc[-len(self.timestamps):]
-                    self.ax.plot(self.timestamps, spy_data, 'g-', label='SPY', linewidth=1.5)
-                
-                # Plot ratio on the right y-axis
-                if len(self.ratio_data) > 0:
-                    self.ax_ratio.plot(self.timestamps, self.ratio_data, 'r-', label='Ratio', linewidth=1)
+            # Limit data to last 100 points
+            if len(st.session_state.timestamps) > 100:
+                st.session_state.timestamps = st.session_state.timestamps[-100:]
+                st.session_state.ratio_data = st.session_state.ratio_data[-100:]
             
-            # Set labels
-            self.ax.set_xlabel('Time')
-            self.ax.set_ylabel('Price ($)')
-            self.ax_ratio.set_ylabel('Ratio')
+            # Update last update time
+            st.session_state.last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # Combine legends
-            lines1, labels1 = self.ax.get_legend_handles_labels()
-            lines2, labels2 = self.ax_ratio.get_legend_handles_labels()
-            self.ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-            
-            # Rotate x-axis labels
-            if len(self.timestamps) > 0:
-                ticks = [self.timestamps[0]]
-                if len(self.timestamps) > 5:
-                    step = len(self.timestamps) // 5
-                    for i in range(step, len(self.timestamps), step):
-                        ticks.append(self.timestamps[i])
-                if self.timestamps[-1] not in ticks:
-                    ticks.append(self.timestamps[-1])
-                self.ax.set_xticks(ticks)
-                self.ax.tick_params(axis='x', rotation=45)
-            
-            # Update canvas
-            self.fig.tight_layout()
-            self.canvas.draw()
-    
-    def clear_data(self):
-        if messagebox.askyesno("Clear Data", "Are you sure you want to clear all data?"):
-            self.es_data = pd.DataFrame()
-            self.spy_data = pd.DataFrame()
-            self.ratio_data = []
-            self.timestamps = []
-            
-            # Reset labels
-            self.es_price_label.config(text="--")
-            self.spy_price_label.config(text="--")
-            self.ratio_label.config(text="--")
-            self.time_label.config(text="Last update: --")
-            self.es_change_label.config(text="--", fg="black")
-            self.spy_change_label.config(text="--", fg="black")
-            self.ratio_change_label.config(text="--", fg="black")
-            
-            # Update chart
-            self.update_chart()
-            
-            self.status_bar.config(text="Data cleared")
-    
-    def toggle_theme(self):
-        self.dark_mode = not self.dark_mode
-        
-        if self.dark_mode:
-            # Dark mode
-            bg_color = "#2e2e2e"
-            fg_color = "white"
-            self.theme_button.config(text="Light Mode", bg="#f0f0f0", fg="black")
+            return True
         else:
-            # Light mode
-            bg_color = "#f0f0f0"
-            fg_color = "black"
-            self.theme_button.config(text="Dark Mode", bg="#333", fg="white")
-        
-        # Update background colors
-        self.root.configure(bg=bg_color)
-        main_frame = self.root.winfo_children()[0]  # Main frame
-        main_frame.configure(bg=bg_color)
-        
-        # Update all widgets in main_frame
-        for widget in main_frame.winfo_children():
-            if isinstance(widget, tk.Frame) or isinstance(widget, tk.LabelFrame):
-                widget.configure(bg=bg_color)
-                for child in widget.winfo_children():
-                    if isinstance(child, (tk.Label, tk.Frame, tk.Checkbutton)):
-                        child.configure(bg=bg_color, fg=fg_color)
-                    # Handle nested frames in calculator
-                    if isinstance(child, tk.Frame):
-                        child.configure(bg=bg_color)
-                        for subchild in child.winfo_children():
-                            if isinstance(subchild, (tk.Label, tk.Checkbutton)):
-                                subchild.configure(bg=bg_color, fg=fg_color)
-            elif isinstance(widget, tk.Label):
-                widget.configure(bg=bg_color, fg=fg_color)
-        
-        # Update status bar
-        self.status_bar.configure(bg=bg_color, fg=fg_color)
-        
-        # Update chart colors
-        if hasattr(self, 'fig'):
-            self.fig.set_facecolor(bg_color)
-            self.ax.set_facecolor(bg_color if self.dark_mode else '#f5f5f5')
-            self.ax.grid(True, linestyle='--', alpha=0.7, color='gray')
-            
-            # Update text colors
-            for text in self.ax.get_xticklabels() + self.ax.get_yticklabels():
-                text.set_color(fg_color)
-            
-            for text in self.ax_ratio.get_yticklabels():
-                text.set_color(fg_color)
-            
-            self.ax.xaxis.label.set_color(fg_color)
-            self.ax.yaxis.label.set_color(fg_color)
-            self.ax_ratio.yaxis.label.set_color(fg_color)
-            
-            # Update chart
-            self.canvas.draw()
+            return False
+    except Exception as e:
+        st.error(f"Error fetching data: {str(e)}")
+        return False
 
+# Function to clear data
+def clear_data():
+    st.session_state.es_data = pd.DataFrame()
+    st.session_state.spy_data = pd.DataFrame()
+    st.session_state.ratio_data = []
+    st.session_state.timestamps = []
+    st.session_state.last_update = "Data cleared"
+    st.session_state.es_change_pct = 0.0
+    st.session_state.spy_change_pct = 0.0
+    st.session_state.ratio_change_pct = 0.0
+
+# Apply custom styles based on dark mode
+def apply_styles():
+    if st.session_state.dark_mode:
+        # Dark mode styles
+        st.markdown("""
+        <style>
+        .stApp {
+            background-color: #2e2e2e;
+            color: white;
+        }
+        .price-display {
+            font-size: 32px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .price-label {
+            font-size: 18px;
+            text-align: center;
+        }
+        .price-change {
+            font-size: 16px;
+            text-align: center;
+        }
+        .sidebar .sidebar-content {
+            background-color: #3e3e3e;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    else:
+        # Light mode styles
+        st.markdown("""
+        <style>
+        .price-display {
+            font-size: 32px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .price-label {
+            font-size: 18px;
+            text-align: center;
+        }
+        .price-change {
+            font-size: 16px;
+            text-align: center;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+# Create plotly chart
+def create_chart():
+    if len(st.session_state.timestamps) > 0 and not st.session_state.es_data.empty and not st.session_state.spy_data.empty:
+        # Create figure with secondary y-axis
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Add ES price trace
+        es_data = st.session_state.es_data["Close"].iloc[-len(st.session_state.timestamps):]
+        fig.add_trace(
+            go.Scatter(
+                x=st.session_state.timestamps, 
+                y=es_data, 
+                name="ES",
+                line=dict(color="blue", width=2)
+            ),
+            secondary_y=False,
+        )
+        
+        # Add SPY price trace
+        spy_data = st.session_state.spy_data["Close"].iloc[-len(st.session_state.timestamps):]
+        fig.add_trace(
+            go.Scatter(
+                x=st.session_state.timestamps, 
+                y=spy_data, 
+                name="SPY",
+                line=dict(color="green", width=2)
+            ),
+            secondary_y=False,
+        )
+        
+        # Add ratio trace on secondary y-axis
+        fig.add_trace(
+            go.Scatter(
+                x=st.session_state.timestamps, 
+                y=st.session_state.ratio_data, 
+                name="Ratio",
+                line=dict(color="red", width=1.5)
+            ),
+            secondary_y=True,
+        )
+        
+        # Set titles
+        fig.update_layout(
+            title_text="ES-SPY Price and Ratio Over Time",
+            title_font_size=16,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            height=400,
+            margin=dict(l=20, r=20, t=60, b=20),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="#f5f5f5" if not st.session_state.dark_mode else "#3e3e3e",
+        )
+        
+        # Set y-axes titles
+        fig.update_yaxes(title_text="Price ($)", secondary_y=False)
+        fig.update_yaxes(title_text="Ratio", secondary_y=True)
+        
+        # Update grid and font colors for dark mode
+        if st.session_state.dark_mode:
+            fig.update_layout(
+                font_color="white",
+                xaxis=dict(gridcolor="#555555"),
+                yaxis=dict(gridcolor="#555555"),
+            )
+        
+        return fig
+    return None
+
+# Main application
 def main():
-    root = tk.Tk()
-    app = ESSpyTracker(root)
-    root.protocol("WM_DELETE_WINDOW", lambda: (setattr(app, 'running', False), root.destroy()))
-    root.mainloop()
+    apply_styles()
+    
+    # Header
+    st.title("UTY CAPITAL ES-SPY Real-Time Tracker")
+    
+    # Control row with buttons
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    
+    with col1:
+        refresh_button = st.button("Refresh Data", key="refresh")
+        if refresh_button:
+            with st.spinner("Fetching data..."):
+                success = fetch_data()
+                if success:
+                    st.success("Data updated successfully!")
+                else:
+                    st.error("Failed to fetch data")
+    
+    with col2:
+        clear_button = st.button("Clear Data", key="clear")
+        if clear_button:
+            clear_data()
+            st.success("Data cleared successfully!")
+    
+    with col3:
+        theme_toggle = st.toggle("Dark Mode", key="toggle_theme")
+        if theme_toggle != st.session_state.dark_mode:
+            st.session_state.dark_mode = theme_toggle
+            st.rerun()  # Changed from st.experimental_rerun()
+    
+    with col4:
+        auto_refresh = st.checkbox("Auto Refresh (5s)", value=False, key="auto_refresh")
+    
+    # Display last update time
+    st.caption(f"Last update: {st.session_state.last_update}")
+    
+    # Price display section
+    price_cols = st.columns(3)
+    
+    # ES price
+    with price_cols[0]:
+        st.markdown("<p class='price-label'>ES Futures</p>", unsafe_allow_html=True)
+        if not st.session_state.es_data.empty:
+            es_price = st.session_state.es_data["Close"].iloc[-1]
+            st.markdown(f"<p class='price-display'>{es_price:.2f}</p>", unsafe_allow_html=True)
+            
+            color = "green" if st.session_state.es_change_pct >= 0 else "red"
+            st.markdown(f"<p class='price-change' style='color:{color};'>({st.session_state.es_change_pct:+.2f}%)</p>", 
+                        unsafe_allow_html=True)
+        else:
+            st.markdown("<p class='price-display'>--</p>", unsafe_allow_html=True)
+            st.markdown("<p class='price-change'>--</p>", unsafe_allow_html=True)
+    
+    # SPY price
+    with price_cols[1]:
+        st.markdown("<p class='price-label'>SPY ETF</p>", unsafe_allow_html=True)
+        if not st.session_state.spy_data.empty:
+            spy_price = st.session_state.spy_data["Close"].iloc[-1]
+            st.markdown(f"<p class='price-display'>{spy_price:.2f}</p>", unsafe_allow_html=True)
+            
+            color = "green" if st.session_state.spy_change_pct >= 0 else "red"
+            st.markdown(f"<p class='price-change' style='color:{color};'>({st.session_state.spy_change_pct:+.2f}%)</p>", 
+                        unsafe_allow_html=True)
+        else:
+            st.markdown("<p class='price-display'>--</p>", unsafe_allow_html=True)
+            st.markdown("<p class='price-change'>--</p>", unsafe_allow_html=True)
+    
+    # Ratio
+    with price_cols[2]:
+        st.markdown("<p class='price-label'>ES/SPY Ratio</p>", unsafe_allow_html=True)
+        if len(st.session_state.ratio_data) > 0:
+            ratio = st.session_state.ratio_data[-1]
+            st.markdown(f"<p class='price-display'>{ratio:.4f}</p>", unsafe_allow_html=True)
+            
+            color = "green" if st.session_state.ratio_change_pct >= 0 else "red"
+            st.markdown(f"<p class='price-change' style='color:{color};'>({st.session_state.ratio_change_pct:+.2f}%)</p>", 
+                        unsafe_allow_html=True)
+        else:
+            st.markdown("<p class='price-display'>--</p>", unsafe_allow_html=True)
+            st.markdown("<p class='price-change'>--</p>", unsafe_allow_html=True)
+    
+    # Add separator
+    st.markdown("---")
+    
+    # Chart section
+    chart_fig = create_chart()
+    if chart_fig:
+        st.plotly_chart(chart_fig, use_container_width=True)
+    else:
+        st.info("No data available for chart. Please refresh to fetch data.")
+    
+    # Price Calculator section
+    st.subheader("Price Calculator")
+    
+    calc_cols = st.columns(2)
+    
+    # Left side - ES to SPY calculator
+    with calc_cols[0]:
+        st.markdown("### Calculate SPY from ES")
+        es_price_input = st.number_input("ES Price:", min_value=0.0, step=0.01, format="%.2f", key="es_input")
+        
+        if st.button("Calculate SPY", key="calc_spy"):
+            if st.session_state.current_ratio > 0:
+                spy_price = es_price_input / st.session_state.current_ratio
+                st.success(f"Calculated SPY Price: ${spy_price:.2f}")
+            else:
+                st.error("Cannot calculate: Current ratio is not available")
+    
+    # Right side - SPY to ES calculator
+    with calc_cols[1]:
+        st.markdown("### Calculate ES from SPY")
+        spy_price_input = st.number_input("SPY Price:", min_value=0.0, step=0.01, format="%.2f", key="spy_input")
+        
+        if st.button("Calculate ES", key="calc_es"):
+            if st.session_state.current_ratio > 0:
+                es_price = spy_price_input * st.session_state.current_ratio
+                st.success(f"Calculated ES Price: ${es_price:.2f}")
+            else:
+                st.error("Cannot calculate: Current ratio is not available")
+    
+    # Custom ratio input
+    st.markdown("### Custom Ratio")
+    custom_ratio_cols = st.columns([2, 2, 1])
+    
+    with custom_ratio_cols[0]:
+        use_current_ratio = st.checkbox("Use current market ratio", value=True, key="use_current")
+    
+    with custom_ratio_cols[1]:
+        custom_ratio = st.number_input(
+            "Custom Ratio:",
+            min_value=0.1,
+            max_value=100.0,
+            value=float(st.session_state.current_ratio if st.session_state.current_ratio > 0 else 10.0),
+            step=0.0001,
+            format="%.4f",
+            key="custom_ratio",
+            disabled=use_current_ratio
+        )
+    
+    # Status bar at the bottom
+    st.markdown("---")
+    status_text = "Updating every 5 seconds..." if st.session_state.auto_refresh else "Manual update mode"
+    st.caption(status_text)
+    
+    # Auto refresh logic
+    if st.session_state.auto_refresh:
+        time.sleep(5)
+        fetch_data()
+        st.rerun()  # Changed from st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
